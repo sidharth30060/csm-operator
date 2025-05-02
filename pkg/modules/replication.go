@@ -1,4 +1,4 @@
-//  Copyright © 2022-2023 Dell Inc. or its subsidiaries. All Rights Reserved.
+//  Copyright © 2022-2025 Dell Inc. or its subsidiaries. All Rights Reserved.
 //
 //  Licensed under the Apache License, Version 2.0 (the "License");
 //  you may not use this file except in compliance with the License.
@@ -44,6 +44,8 @@ const (
 	RepctlBinary = "repctl"
 	// ReplicationPrefix -
 	ReplicationPrefix = "replication.storage.dell.com"
+	// ReplicationCrds - YAML with Replication CRDs
+	ReplicationCrds = "replicationcrds.all.yaml"
 	// DefaultReplicationContextPrefix -
 	DefaultReplicationContextPrefix = "<ReplicationContextPrefix>"
 	// DefaultReplicationPrefix -
@@ -491,6 +493,38 @@ func DeleteReplicationConfigmap(ctrlClient client.Client) error {
 		if k8serrors.IsNotFound(err) {
 			return nil
 		}
+		return err
+	}
+
+	return nil
+}
+
+func getReplicationCrdDeploy(op utils.OperatorConfig, cr csmv1.ContainerStorageModule) (string, error) {
+	yamlString := ""
+
+	repl, err := getReplicaModule(cr)
+	if err != nil {
+		return yamlString, err
+	}
+
+	buf, err := readConfigFile(repl, cr, op, ReplicationCrds)
+	if err != nil {
+		return yamlString, err
+	}
+
+	yamlString = string(buf)
+	return yamlString, nil
+}
+
+func ReplicationCrdDeploy(ctx context.Context, op utils.OperatorConfig, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client) error {
+
+	yamlString, err := getReplicationCrdDeploy(op, cr)
+	if err != nil {
+		return err
+	}
+
+	err = applyDeleteObjects(ctx, ctrlClient, yamlString, false)
+	if err != nil {
 		return err
 	}
 

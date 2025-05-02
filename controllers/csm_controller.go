@@ -645,6 +645,9 @@ func (r *ContainerStorageModuleReconciler) oldStandAloneModuleCleanup(ctx contex
 						return err
 					}
 				}
+
+				// remove replication CRDs
+				// TODO
 			}
 		}
 		// check if observability needs to be uninstalled
@@ -737,9 +740,17 @@ func (r *ContainerStorageModuleReconciler) SyncCSM(ctx context.Context, cr csmv1
 
 	// Create/Update Reverseproxy Server
 	if reverseProxyEnabled, _ := utils.IsModuleEnabled(ctx, cr, csmv1.ReverseProxy); reverseProxyEnabled && !modules.IsReverseProxySidecar() {
-		log.Infow("Trying Create/Update reverseproxy...")
+		log.Infow("Create/Update reverseproxy...")
 		if err := r.reconcileReverseProxyServer(ctx, false, operatorConfig, cr, ctrlClient); err != nil {
 			return fmt.Errorf("failed to deploy reverseproxy proxy server: %v", err)
+		}
+	}
+
+	// Install/update the Replication CRDs
+	if replicationEnabled, _ := utils.IsModuleEnabled(ctx, cr, csmv1.Replication); replicationEnabled {
+		log.Infow("Create/Update Replication CRDs")
+		if err := r.reconcileReplicationCRDS(ctx, operatorConfig, cr, ctrlClient); err != nil {
+			return fmt.Errorf("failed to deploy replication CRDs: %v", err)
 		}
 	}
 
@@ -1125,6 +1136,15 @@ func (r *ContainerStorageModuleReconciler) reconcileAppMobility(ctx context.Cont
 		}
 	}
 
+	return nil
+}
+
+func (r *ContainerStorageModuleReconciler) reconcileReplicationCRDS(ctx context.Context, op utils.OperatorConfig, cr csmv1.ContainerStorageModule, ctrlClient client.Client) error {
+	log := logger.GetLogger(ctx)
+	log.Infow("Reconcile replication CRDs")
+	if err := modules.ReplicationCrdDeploy(ctx, op, cr, ctrlClient); err != nil {
+		return fmt.Errorf("unable to reconcile replication CRDs: %v", err)
+	}
 	return nil
 }
 
