@@ -72,7 +72,7 @@ gen-semver: generate
 -include semver.mk
 
 ifdef NOTES
-	RELNOTE="-$(NOTES)"
+	RELNOTE=-$(NOTES)
 else
 	RELNOTE=
 endif
