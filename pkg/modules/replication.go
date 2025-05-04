@@ -523,10 +523,14 @@ func ReplicationCrdDeploy(ctx context.Context, op utils.OperatorConfig, cr csmv1
 		return err
 	}
 
-	err = applyDeleteObjects(ctx, ctrlClient, yamlString, false)
+	return applyDeleteObjects(ctx, ctrlClient, yamlString, false)
+}
+
+func DeleteReplicationCrds(ctx context.Context, op utils.OperatorConfig, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client) error {
+	yamlString, err := getReplicationCrdDeploy(op, cr)
 	if err != nil {
 		return err
 	}
 
-	return nil
+	return applyDeleteObjects(ctx, ctrlClient, yamlString, true)
 }

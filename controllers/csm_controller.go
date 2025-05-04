@@ -647,7 +647,10 @@ func (r *ContainerStorageModuleReconciler) oldStandAloneModuleCleanup(ctx contex
 				}
 
 				// remove replication CRDs
-				// TODO
+				log.Infow("Deleting Replication CRDs", "clusterID:", cluster.ClusterID)
+				if err = modules.DeleteReplicationCrds(ctx, operatorConfig, *oldCR, cluster.ClusterCTRLClient); err != nil {
+					log.Warnf("Failed to delete replication CRDs: %v", err)
+				}
 			}
 		}
 		// check if observability needs to be uninstalled
@@ -1141,7 +1144,7 @@ func (r *ContainerStorageModuleReconciler) reconcileAppMobility(ctx context.Cont
 
 func (r *ContainerStorageModuleReconciler) reconcileReplicationCRDS(ctx context.Context, op utils.OperatorConfig, cr csmv1.ContainerStorageModule, ctrlClient client.Client) error {
 	log := logger.GetLogger(ctx)
-	log.Infow("Reconcile replication CRDs")
+	log.Debugw("Reconcile replication CRDs")
 	if err := modules.ReplicationCrdDeploy(ctx, op, cr, ctrlClient); err != nil {
 		return fmt.Errorf("unable to reconcile replication CRDs: %v", err)
 	}
@@ -1324,6 +1327,12 @@ func (r *ContainerStorageModuleReconciler) removeDriver(ctx context.Context, ins
 			log.Infow("Deleting Replication configmap")
 			if err = modules.DeleteReplicationConfigmap(cluster.ClusterCTRLClient); err != nil {
 				return err
+			}
+
+			log.Infow("Deleting Replication CRDs")
+			if err = modules.DeleteReplicationCrds(ctx, operatorConfig, instance, cluster.ClusterCTRLClient); err != nil {
+				// failure here should not block  the deletion of the other components
+				log.Warnf("unable to delete replication CRDs: %v", err)
 			}
 		}
 
