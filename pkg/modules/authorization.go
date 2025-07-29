@@ -845,7 +845,7 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	}
 
 	// Vault is supported only till config v2.2.0 (CSM 1.14)
-	vaultVersion, err := operatorutils.MinVersionCheck("v2.2.0", authModule.ConfigVersion)
+	vaultVersion, err := operatorutils.MinVersionCheck(authModule.ConfigVersion, "v2.2.0")
 	if err != nil {
 		return err
 	}
@@ -1889,7 +1889,7 @@ func AuthCrdDeploy(ctx context.Context, op operatorutils.OperatorConfig, cr csmv
 	}
 
 	// v1 does not have custom resources, so treat it like a no-op
-	if ok, err := operatorutils.MinVersionCheck("v2.0.0-alpha", auth.ConfigVersion); !ok {
+	if ok, err := operatorutils.MinVersionCheck(auth.ConfigVersion, "v2.0.0-alpha"); !ok {
 		return nil
 	} else if err != nil {
 		return err
