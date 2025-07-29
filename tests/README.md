@@ -12,7 +12,6 @@ This directory contains the testing infrastructure and E2E test implementation f
     - [Array Information](#array-information)
     - [Application Mobility Prerequisites](#application-mobility-prerequisites)
     - [Authorization Proxy Server Prerequisites](#authorization-proxy-server-prerequisites)
-    - [Shared NFS Prerequisites](#shared-nfs-prerequisites)
   - [Run](#run)
     - [Scenarios File](#scenarios-file)
   - [Developing E2E Tests](#developing-e2e-tests)
@@ -98,15 +97,6 @@ Notes:
 - Authorization V2 scenarios only support PowerFlex, PowerScale and PowerMax
 - Upgrade from Authorization V1 to V2 is not supported
 - The required host entry `<master node IP> csm-authorization.com` is now automatically added to `/etc/hosts`, so no manual update is needed.
-
-### Shared NFS Prerequisites
-
-If running the Shared NFS e2e tests, further setup must be done:
-
-- On each of the worker nodes, setup the nfs-server service and ensure that mounting with nfs4 is enabled.
-- Install the `sshpass` command on the VM where the tests are being run.
-- Update the password within `scripts/node_credential` to the password of the worker nodes (this assumes that all nodes share the same password).
-- During e2e execution specify the `sharednfs` flag. Otherwise, the tests won't run on its own due to the above prerequisite.
 
 ## Run
 

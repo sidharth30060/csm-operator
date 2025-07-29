@@ -719,7 +719,13 @@ func AuthorizationServerDeployment(ctx context.Context, isDeleting bool, op oper
 		return err
 	}
 
-	if semver.Compare(authModule.ConfigVersion, "v2.3.0") >= 0 {
+	// scaffolds are applied only for v2.3.0 and above for secret provider class mounts and volumes
+	ok, err := operatorutils.MinVersionCheck("v2.3.0", authModule.ConfigVersion)
+	if err != nil {
+		return err
+	}
+
+	if ok {
 		err = applyDeleteAuthorizationRedisStatefulsetV2(ctx, isDeleting, cr, ctrlClient)
 		if err != nil {
 			return err
@@ -827,7 +833,11 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	}
 
 	// Vault is supported only till config v2.2.0 (CSM 1.14)
-	if semver.Compare(authModule.ConfigVersion, "v2.3.0") == -1 {
+	vaultVersion, err := operatorutils.MinVersionCheck("v2.2.0", authModule.ConfigVersion)
+	if err != nil {
+		return err
+	}
+	if vaultVersion {
 		err = applyDeleteVaultCertificates(ctx, isDeleting, cr, ctrlClient)
 		if err != nil {
 			return fmt.Errorf("applying/deleting vault certificates: %w", err)
@@ -866,7 +876,11 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	}
 
 	// Either SecretProviderClasses OR Secrets must be specified (mutually exclusive) from config v2.3.0 (CSM 1.15) onwards
-	if semver.Compare(authModule.ConfigVersion, "v2.3.0") >= 0 {
+	secretProviderClass, err := operatorutils.MinVersionCheck("v2.3.0", authModule.ConfigVersion)
+	if err != nil {
+		return err
+	}
+	if secretProviderClass {
 		hasSPC := len(secretProviderClasses) > 0
 		hasSecrets := len(secrets) > 0
 
@@ -879,8 +893,7 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	// #nosec G115
 	deployment := getStorageServiceScaffold(cr.Name, cr.Namespace, image, int32(replicas))
 
-	// SecretProviderClasses is supported from config v2.3.0 (CSM 1.15) onwards
-	if semver.Compare(authModule.ConfigVersion, "v2.3.0") >= 0 {
+	if secretProviderClass {
 		// Determine whether to read from secret provider classes or kubernetes secrets
 		if len(secretProviderClasses) > 0 {
 			// set volumes for secret provider classes
@@ -952,7 +965,7 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 
 	// Vault is supported only till config v2.2.0 (CSM 1.14)
 	var vaultArgs []string
-	if semver.Compare(authModule.ConfigVersion, "v2.3.0") == -1 {
+	if vaultVersion {
 		for _, vault := range vaults {
 			vaultArgs = append(vaultArgs, fmt.Sprintf("--vault=%s,%s,%s,%t", vault.Identifier, vault.Address, vault.Role, vault.SkipCertificateValidation))
 		}
@@ -966,7 +979,11 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	}
 
 	// if the config version is greater than v2.0.0-alpha, add the collector-address arg
-	if semver.Compare(authModule.ConfigVersion, "v2.0.0-alpha") == 1 {
+	ok, err := operatorutils.MinVersionCheck("v2.0.0-alpha", authModule.ConfigVersion)
+	if err != nil {
+		return err
+	}
+	if ok {
 		args = append(args, fmt.Sprintf("--collector-address=%s", otelCollector))
 	}
 	args = append(args, vaultArgs...)
@@ -979,7 +996,7 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	}
 
 	// if the config version is greater than v2.0.0-alpha, set promhttp container port
-	if semver.Compare(authModule.ConfigVersion, "v2.0.0-alpha") == 1 {
+	if ok {
 		for i, c := range deployment.Spec.Template.Spec.Containers {
 			if c.Name == "storage-service" {
 				deployment.Spec.Template.Spec.Containers[i].Ports = append(deployment.Spec.Template.Spec.Containers[i].Ports,
@@ -1860,8 +1877,10 @@ func AuthCrdDeploy(ctx context.Context, op operatorutils.OperatorConfig, cr csmv
 	}
 
 	// v1 does not have custom resources, so treat it like a no-op
-	if semver.Compare(auth.ConfigVersion, "v2.0.0-alpha") < 0 {
+	if ok, err := operatorutils.MinVersionCheck("v2.0.0-alpha", auth.ConfigVersion); !ok {
 		return nil
+	} else if err != nil {
+		return err
 	}
 
 	yamlString, err := getAuthCrdDeploy(op, cr)
