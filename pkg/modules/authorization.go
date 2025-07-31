@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	applyv1 "k8s.io/client-go/applyconfigurations/apps/v1"
 	acorev1 "k8s.io/client-go/applyconfigurations/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
@@ -903,9 +904,10 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 
 	if storageCreds {
 		// remove vault certificates, args, and volumes/volume mounts if upgrading from verions < v2.3.0
-		err = applyDeleteVaultCertificates(ctx, true, cr, ctrlClient)
-		if err != nil {
-			return fmt.Errorf("deleting vault certificates: %w", err)
+		dp, _ := getDeployment(cr, ctrlClient)
+		if dp != nil {
+			log.Infof("existing storage service deployment found")
+			removeVaultFromStorageService(ctx, cr, ctrlClient, dp)
 		}
 
 		// Determine whether to read from secret provider classes or kubernetes secrets
@@ -1160,6 +1162,67 @@ func mountSecretProviderClassVolumes(secretProviderClasses []string, deployment 
 			break
 		}
 	}
+}
+
+// remove vault certificates, args, and volumes/volume mounts if upgrading from verions < v2.3.0
+func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client, dp *appsv1.Deployment) error {
+	// remove vault certificates
+	err := applyDeleteVaultCertificates(ctx, true, cr, ctrlClient)
+	if err != nil {
+		return fmt.Errorf("deleting vault certificates: %w", err)
+	}
+
+	// remove vault args and volume mounts from the deployment's container
+	for i, container := range dp.Spec.Template.Spec.Containers {
+		if container.Name == "storage-service" {
+			// Filter out vault args
+			var newArgs []string
+			for _, arg := range container.Args {
+				if !strings.HasPrefix(arg, "--vault=") {
+					newArgs = append(newArgs, arg)
+				}
+			}
+			dp.Spec.Template.Spec.Containers[i].Args = newArgs
+
+			// Filter out vault volume mounts
+			var newVolumeMounts []corev1.VolumeMount
+			for _, volumeMount := range container.VolumeMounts {
+				if !strings.Contains(volumeMount.MountPath, "/etc/vault/") {
+					newVolumeMounts = append(newVolumeMounts, volumeMount)
+				}
+			}
+			dp.Spec.Template.Spec.Containers[i].VolumeMounts = newVolumeMounts
+		}
+	}
+
+	// Filter out vault volumes
+	var newVolumes []corev1.Volume
+	for _, volume := range dp.Spec.Template.Spec.Volumes {
+		if !strings.Contains(volume.Name, "vault-client-certificate-") {
+			newVolumes = append(newVolumes, volume)
+		}
+	}
+	dp.Spec.Template.Spec.Volumes = newVolumes
+
+	// Update the deployment
+	err = ctrlClient.Update(context.Background(), dp)
+	if err != nil {
+		return fmt.Errorf("updating storage service deployment for upgrading: %w", err)
+	}
+
+	return nil
+}
+
+func getDeployment(cr csmv1.ContainerStorageModule, ctrlClient client.Client) (*appsv1.Deployment, error) {
+	dp := &appsv1.Deployment{}
+	if err := ctrlClient.Get(context.TODO(), client.ObjectKey{
+		Namespace: cr.Namespace,
+		Name:      cr.Name,
+	}, dp); err != nil {
+		return nil, err
+	}
+
+	return dp, nil
 }
 
 func applyDeleteAuthorizationProxyServerV2(ctx context.Context, isDeleting bool, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client) error {
