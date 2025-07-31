@@ -903,11 +903,26 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	deployment := getStorageServiceScaffold(cr.Name, cr.Namespace, image, int32(replicas))
 
 	if storageCreds {
-		// remove vault certificates, args, and volumes/volume mounts if upgrading from verions < v2.3.0
-		dp, _ := getDeployment(cr, ctrlClient)
-		if dp != nil {
-			log.Infof("existing storage service deployment found")
-			removeVaultFromStorageService(ctx, cr, ctrlClient, dp)
+		authCsmObject, _ := getCsmObject(ctx, ctrlClient, "authorization", cr.Namespace)
+		if authCsmObject != nil {
+			// get the config version of the existing authorization CR
+			authModule, err := getAuthorizationModule(*authCsmObject)
+			if err != nil {
+				return fmt.Errorf("getting authorization module: %v", err)
+			}
+
+			// remove vault if only upgrading from version v2.2.0 to v2.3.0 since vault is not supported in v2.3.0 and onwards
+			if authModule.ConfigVersion == "v2.2.0" {
+				dp, _ := getDeployment(ctx, ctrlClient, "storage-service", cr.Namespace)
+				if dp != nil {
+					log.Infof("existing storage service deployment found")
+					// remove vault certificates, args, and volumes/volume mounts
+					err := removeVaultFromStorageService(ctx, *authCsmObject, ctrlClient, dp)
+					if err != nil {
+						return fmt.Errorf("removing vault from storage service: %v", err)
+					}
+				}
+			}
 		}
 
 		// Determine whether to read from secret provider classes or kubernetes secrets
@@ -1213,16 +1228,28 @@ func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorag
 	return nil
 }
 
-func getDeployment(cr csmv1.ContainerStorageModule, ctrlClient client.Client) (*appsv1.Deployment, error) {
+func getDeployment(ctx context.Context, ctrlClient client.Client, deploymentName, namespace string) (*appsv1.Deployment, error) {
 	dp := &appsv1.Deployment{}
-	if err := ctrlClient.Get(context.TODO(), client.ObjectKey{
-		Namespace: cr.Namespace,
-		Name:      cr.Name,
+	if err := ctrlClient.Get(ctx, client.ObjectKey{
+		Namespace: namespace,
+		Name:      deploymentName,
 	}, dp); err != nil {
 		return nil, err
 	}
 
 	return dp, nil
+}
+
+func getCsmObject(ctx context.Context, ctrlClient client.Client, csmObjectName, namespace string) (*csmv1.ContainerStorageModule, error) {
+	csmObject := &csmv1.ContainerStorageModule{}
+	if err := ctrlClient.Get(ctx, client.ObjectKey{
+		Namespace: namespace,
+		Name:      csmObjectName,
+	}, csmObject); err != nil {
+		return nil, err
+	}
+
+	return csmObject, nil
 }
 
 func applyDeleteAuthorizationProxyServerV2(ctx context.Context, isDeleting bool, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client) error {
