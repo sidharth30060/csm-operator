@@ -525,7 +525,7 @@ func AuthorizationPrecheck(ctx context.Context, op operatorutils.OperatorConfig,
 		}
 	}
 
-	var secrets []string 
+	var secrets []string
 
 	// Karavi authorization config is not used in config v2.3.0 and later (CSM 1.15)
 	condensedSecretVersion, err := operatorutils.MinVersionCheck("v2.3.0", auth.ConfigVersion)
@@ -537,7 +537,7 @@ func AuthorizationPrecheck(ctx context.Context, op operatorutils.OperatorConfig,
 	} else {
 		secrets = []string{"karavi-authorization-config", "proxy-authz-tokens"}
 	}
-	
+
 	if !skipCertValid {
 		secrets = append(secrets, "proxy-server-root-certificate")
 	}
@@ -839,6 +839,7 @@ func authorizationStorageServiceV1(ctx context.Context, isDeleting bool, cr csmv
 }
 
 func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client) error {
+	log := logger.GetLogger(ctx)
 	authModule, err := getAuthorizationModule(cr)
 	if err != nil {
 		return err
@@ -888,11 +889,11 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	}
 
 	// Either SecretProviderClasses OR Secrets must be specified (mutually exclusive) from config v2.3.0 (CSM 1.15) onwards
-	secretProviderClass, err := operatorutils.MinVersionCheck("v2.3.0", authModule.ConfigVersion)
+	storageCreds, err := operatorutils.MinVersionCheck("v2.3.0", authModule.ConfigVersion)
 	if err != nil {
 		return err
 	}
-	if secretProviderClass {
+	if storageCreds {
 		hasSPC := len(secretProviderClasses) > 0
 		hasSecrets := len(secrets) > 0
 
@@ -905,12 +906,14 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	// #nosec G115
 	deployment := getStorageServiceScaffold(cr.Name, cr.Namespace, image, int32(replicas))
 
-	if secretProviderClass {
+	if storageCreds {
 		// Determine whether to read from secret provider classes or kubernetes secrets
 		if len(secretProviderClasses) > 0 {
 			// set volumes for secret provider classes
+			log.Infof("Using secret provider classes for storage system credentials")
 			mountSecretProviderClassVolumes(secretProviderClasses, &deployment)
 		} else {
+			log.Infof("Using Kubernetes secret for storage system credentials")
 			// set volumes for kubernetes secrets
 			mountSecretVolumes(secrets, &deployment)
 		}
@@ -934,6 +937,7 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	} else {
 		// Vault is supported only till config v2.2.0 (CSM 1.14)
 		// set vault volumes
+		log.Infof("Using Vault for storage system credentials")
 		mountVaultVolumes(vaults, &deployment)
 	}
 

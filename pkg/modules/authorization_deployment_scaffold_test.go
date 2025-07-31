@@ -180,7 +180,7 @@ func TestGetTenantServiceScaffold(t *testing.T) {
 
 	// Args
 	expectedArgs := []string{
-		"--redis-sentinel=sentinel-0.sentinel.test-namespace.svc.cluster.local:5000,sentinel-1.sentinel.test-namespace.svc.cluster.local:5000,sentinel-2.sentinel.test-namespace.svc.cluster.local:5000,sentinel-3.sentinel.test-namespace.svc.cluster.local:5000,sentinel-4.sentinel.test-namespace.svc.cluster.local:5000",
+		"--redis-sentinel=$(SENTINELS)",
 		"--redis-password=$(REDIS_PASSWORD)",
 	}
 	if len(container.Args) != len(expectedArgs) {

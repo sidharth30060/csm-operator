@@ -58,6 +58,10 @@ func getProxyServerScaffold(name, sentinelName, namespace, proxyImage, opaImage,
 							ImagePullPolicy: "Always",
 							Env: []corev1.EnvVar{
 								{
+									Name:  "SENTINELS",
+									Value: buildSentinelList(sentinelReplicas, sentinelName, namespace),
+								},
+								{
 									Name: "REDIS_PASSWORD",
 									ValueFrom: &corev1.EnvVarSource{
 										SecretKeyRef: &corev1.SecretKeySelector{
@@ -70,7 +74,7 @@ func getProxyServerScaffold(name, sentinelName, namespace, proxyImage, opaImage,
 								},
 							},
 							Args: []string{
-								fmt.Sprintf("--redis-sentinel=%s", buildSentinelList(sentinelReplicas, sentinelName, namespace)),
+								"--redis-sentinel=$(SENTINELS)",
 								"--redis-password=$(REDIS_PASSWORD)",
 								fmt.Sprintf("--tenant-service=tenant-service.%s.svc.cluster.local:50051", namespace),
 								fmt.Sprintf("--role-service=role-service.%s.svc.cluster.local:50051", namespace),
@@ -238,7 +242,7 @@ func getStorageServiceScaffold(name string, namespace string, image string, repl
 }
 
 // getTenantServiceScaffold returns tenant-service deployment for authorization v2
-func getTenantServiceScaffold(name, namespace, seninelName, image, redisSecretName, redisPasswordKey string, replicas int32, sentinelReplicas int) appsv1.Deployment {
+func getTenantServiceScaffold(name, namespace, sentinelName, image, redisSecretName, redisPasswordKey string, replicas int32, sentinelReplicas int) appsv1.Deployment {
 	return appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Deployment",
@@ -274,6 +278,10 @@ func getTenantServiceScaffold(name, namespace, seninelName, image, redisSecretNa
 							ImagePullPolicy: "Always",
 							Env: []corev1.EnvVar{
 								{
+									Name:  "SENTINELS",
+									Value: buildSentinelList(sentinelReplicas, sentinelName, namespace),
+								},
+								{
 									Name: "REDIS_PASSWORD",
 									ValueFrom: &corev1.EnvVarSource{
 										SecretKeyRef: &corev1.SecretKeySelector{
@@ -286,7 +294,7 @@ func getTenantServiceScaffold(name, namespace, seninelName, image, redisSecretNa
 								},
 							},
 							Args: []string{
-								fmt.Sprintf("--redis-sentinel=%s", buildSentinelList(sentinelReplicas, seninelName, namespace)),
+								"--redis-sentinel=$(SENTINELS)",
 								"--redis-password=$(REDIS_PASSWORD)",
 							},
 							Ports: []corev1.ContainerPort{
@@ -387,13 +395,16 @@ func getAuthorizationRedisStatefulsetScaffold(crName, name, namespace, image, re
 							Command: []string{"sh", "-c"},
 							Args: []string{
 								`cp /csm-auth-redis-cm/redis.conf /etc/redis/redis.conf
+
 								echo "masterauth $REDIS_PASSWORD" >> /etc/redis/redis.conf
 								echo "requirepass $REDIS_PASSWORD" >> /etc/redis/redis.conf
+
 								echo "Finding master..."
 								MASTER_FDQN=$(hostname  -f | sed -e 's/redis-csm-[0-9]\./redis-csm-0./')
 								echo "Master at " $MASTER_FDQN
 								if [ "$(redis-cli -h sentinel -p 5000 ping)" != "PONG" ]; then
 									echo "No sentinel found."
+
 									if [ "$(hostname)" = "redis-csm-0" ]; then
 									echo "This is redis master, not updating config..."
 									else
@@ -684,8 +695,9 @@ func getAuthorizationSentinelStatefulsetScaffold(crName, sentinelName, redisName
 									nodes=$( echo "$nodes*$node" )
 								done
 								loop=$(echo $nodes | sed -e "s/"*"/\n/g")
-								echo "$loop"
+
 								foundMaster=false
+
 								while [ "$foundMaster" = "false" ]
 								do
 									for i in $loop
@@ -711,6 +723,7 @@ func getAuthorizationSentinelStatefulsetScaffold(crName, sentinelName, redisName
 										fi
 										fi
 									done
+
 									if [ "$foundMaster" = "true" ]; then
 									break
 									else
@@ -718,6 +731,7 @@ func getAuthorizationSentinelStatefulsetScaffold(crName, sentinelName, redisName
 									sleep 30
 									fi
 								done
+
 								echo "sentinel monitor mymaster $MASTER 6379 2" >> /tmp/master
 								echo "port 5000
 								sentinel resolve-hostnames yes
@@ -786,11 +800,11 @@ func getAuthorizationSentinelStatefulsetScaffold(crName, sentinelName, redisName
 // buildSentinelList builds a comma separated list of sentinel addresses
 func buildSentinelList(replicas int, sentinelName, namespace string) string {
 	var sentinels []string
-	for i := 0; i < replicas; i++ {
+	for i := range replicas {
 		sentinel := fmt.Sprintf("%s-%d.%s.%s.svc.cluster.local:5000", sentinelName, i, sentinelName, namespace)
 		sentinels = append(sentinels, sentinel)
 	}
-	return strings.Join(sentinels, ",")
+	return strings.Join(sentinels, ", ")
 }
 
 // createRedisK8sSecret creates a k8s secret for redis
