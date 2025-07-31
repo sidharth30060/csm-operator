@@ -845,18 +845,6 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 		return err
 	}
 
-	// Vault is supported only till config v2.2.0 (CSM 1.14)
-	vaultVersion, err := operatorutils.MinVersionCheck(authModule.ConfigVersion, "v2.2.0")
-	if err != nil {
-		return err
-	}
-	if vaultVersion {
-		err = applyDeleteVaultCertificates(ctx, isDeleting, cr, ctrlClient)
-		if err != nil {
-			return fmt.Errorf("applying/deleting vault certificates: %w", err)
-		}
-	}
-
 	replicas := 0
 	sentinels := ""
 	image := ""
@@ -888,6 +876,13 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 		}
 	}
 
+	// set arguments
+	args := []string{
+		"--redis-sentinel=$(SENTINELS)",
+		"--redis-password=$(REDIS_PASSWORD)",
+		fmt.Sprintf("--leader-election=%t", leaderElection),
+	}
+
 	// Either SecretProviderClasses OR Secrets must be specified (mutually exclusive) from config v2.3.0 (CSM 1.15) onwards
 	storageCreds, err := operatorutils.MinVersionCheck("v2.3.0", authModule.ConfigVersion)
 	if err != nil {
@@ -907,6 +902,12 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	deployment := getStorageServiceScaffold(cr.Name, cr.Namespace, image, int32(replicas))
 
 	if storageCreds {
+		// remove vault certificates, args, and volumes/volume mounts if upgrading from verions < v2.3.0
+		err = applyDeleteVaultCertificates(ctx, true, cr, ctrlClient)
+		if err != nil {
+			return fmt.Errorf("deleting vault certificates: %w", err)
+		}
+
 		// Determine whether to read from secret provider classes or kubernetes secrets
 		if len(secretProviderClasses) > 0 {
 			// set volumes for secret provider classes
@@ -936,9 +937,24 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 		}
 	} else {
 		// Vault is supported only till config v2.2.0 (CSM 1.14)
+
+		// apply vault certificates
+		err = applyDeleteVaultCertificates(ctx, isDeleting, cr, ctrlClient)
+		if err != nil {
+			return fmt.Errorf("applying/deleting vault certificates: %w", err)
+		}
+
 		// set vault volumes
 		log.Infof("Using Vault for storage system credentials")
 		mountVaultVolumes(vaults, &deployment)
+
+		// set vault args
+		var vaultArgs []string
+		for _, vault := range vaults {
+			vaultArgs = append(vaultArgs, fmt.Sprintf("--vault=%s,%s,%s,%t", vault.Identifier, vault.Address, vault.Role, vault.SkipCertificateValidation))
+		}
+
+		args = append(args, vaultArgs...)
 	}
 
 	// set redis envs
@@ -979,21 +995,6 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 		}
 	}
 
-	// Vault is supported only till config v2.2.0 (CSM 1.14)
-	var vaultArgs []string
-	if vaultVersion {
-		for _, vault := range vaults {
-			vaultArgs = append(vaultArgs, fmt.Sprintf("--vault=%s,%s,%s,%t", vault.Identifier, vault.Address, vault.Role, vault.SkipCertificateValidation))
-		}
-	}
-
-	// set arguments
-	args := []string{
-		"--redis-sentinel=$(SENTINELS)",
-		"--redis-password=$(REDIS_PASSWORD)",
-		fmt.Sprintf("--leader-election=%t", leaderElection),
-	}
-
 	// if the config version is greater than v2.0.0-alpha, add the collector-address arg
 	ok, err := operatorutils.MinVersionCheck("v2.0.0-alpha", authModule.ConfigVersion)
 	if err != nil {
@@ -1002,7 +1003,6 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	if ok {
 		args = append(args, fmt.Sprintf("--collector-address=%s", otelCollector))
 	}
-	args = append(args, vaultArgs...)
 
 	for i, c := range deployment.Spec.Template.Spec.Containers {
 		if c.Name == "storage-service" {
