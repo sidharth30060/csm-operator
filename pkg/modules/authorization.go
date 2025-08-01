@@ -144,6 +144,8 @@ const (
 	AuthStorageSystemCredentialsComponent = "storage-system-credentials"
 	// defaultRedisSecretName - name of default redis K8s secret
 	defaultRedisSecretName = "redis-csm-secret" // #nosec G101 -- This is a false positive
+	// defaultRedisPasswordKey - name of default redis key
+	defaultRedisPasswordKey = "password" // #nosec G101 -- This is a false positive
 
 	// AuthLocalStorageClass -
 	AuthLocalStorageClass = "csm-authorization-local-storage"
@@ -867,6 +869,15 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 				sentinelValues = append(sentinelValues, fmt.Sprintf("sentinel-%d.sentinel.%s.svc.cluster.local:5000", i, cr.Namespace))
 			}
 			sentinels = strings.Join(sentinelValues, ", ")
+			redisSecretName = defaultRedisSecretName
+			redisPasswordKey = defaultRedisPasswordKey
+			for _, config := range component.RedisSecretProviderClass {
+				redisUsernameKey = config.RedisUsernameKey
+				redisPasswordKey = config.RedisPasswordKey
+				if config.RedisSecretName != "" {
+					redisSecretName = config.RedisSecretName
+				}
+			}
 		case AuthVaultComponent:
 			vaults = component.Vaults
 		case AuthStorageSystemCredentialsComponent:
@@ -975,40 +986,27 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	}
 
 	// set redis envs
-	for _, component := range authModule.Components {
-		for _, config := range component.RedisSecretProviderClass {
-			redisUsernameKey = config.RedisUsernameKey
-			redisPasswordKey = config.RedisPasswordKey
-
-			if config.RedisSecretName == "" {
-				redisSecretName = defaultRedisSecretName
-			} else {
-				redisSecretName = config.RedisSecretName
-			}
-
-			redis := []corev1.EnvVar{
-				{
-					Name:  "SENTINELS",
-					Value: sentinels,
-				},
-				{
-					Name: "REDIS_PASSWORD",
-					ValueFrom: &corev1.EnvVarSource{
-						SecretKeyRef: &corev1.SecretKeySelector{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: redisSecretName,
-							},
-							Key: redisPasswordKey,
-						},
+	redis := []corev1.EnvVar{
+		{
+			Name:  "SENTINELS",
+			Value: sentinels,
+		},
+		{
+			Name: "REDIS_PASSWORD",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: redisSecretName,
 					},
+					Key: redisPasswordKey,
 				},
-			}
-			for i, c := range deployment.Spec.Template.Spec.Containers {
-				if c.Name == "storage-service" {
-					deployment.Spec.Template.Spec.Containers[i].Env = append(deployment.Spec.Template.Spec.Containers[i].Env, redis...)
-					break
-				}
-			}
+			},
+		},
+	}
+	for i, c := range deployment.Spec.Template.Spec.Containers {
+		if c.Name == "storage-service" {
+			deployment.Spec.Template.Spec.Containers[i].Env = append(deployment.Spec.Template.Spec.Containers[i].Env, redis...)
+			break
 		}
 	}
 
@@ -2263,7 +2261,7 @@ func getRedisChecksumFromSecretData(ctx context.Context, ctrlClient crclient.Cli
 	}, redisSecret)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			log.Info("Redis secret not found; assuming it was deleted.")
+			log.Infof("Redis secret %s not found; assuming it was deleted.", secretName)
 			return "", nil
 		}
 		log.Warn(err, "Failed to query for redis secret, it could have been deleted.")
