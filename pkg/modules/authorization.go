@@ -948,21 +948,7 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 		}
 
 		// redis secret provider class
-		for _, component := range authModule.Components {
-			for _, config := range component.RedisSecretProviderClass {
-				if config.RedisSecretName != "" {
-					// add volume for redis secret provider class
-					redisVolume := redisVolume(redisSecretName)
-					deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, redisVolume)
-
-					// set volume mount for redis secret provider class
-					for i := range deployment.Spec.Template.Spec.Containers {
-						redisVolumeMount := redisVolumeMount()
-						deployment.Spec.Template.Spec.Containers[i].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[i].VolumeMounts, redisVolumeMount)
-					}
-				}
-			}
-		}
+		mountRedisVolumesInDeployment(authModule, &deployment)
 	} else {
 		// Vault is supported only till config v2.2.0 (CSM 1.14)
 
@@ -1177,6 +1163,45 @@ func mountSecretProviderClassVolumes(secretProviderClasses []string, deployment 
 	}
 }
 
+// mountRedisVolumesInDeployment mounts redis volumes for an authorizationdeployment
+func mountRedisVolumesInDeployment(authModule csmv1.Module, deployment *appsv1.Deployment) {
+	// redis secret provider class
+	for _, component := range authModule.Components {
+		for _, config := range component.RedisSecretProviderClass {
+			if config.RedisSecretName != "" {
+				// add volume for redis secret provider class
+				redisVolume := redisVolume(redisSecretName)
+				deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, redisVolume)
+
+				// set volume mount for redis secret provider class
+				for i := range deployment.Spec.Template.Spec.Containers {
+					redisVolumeMount := redisVolumeMount()
+					deployment.Spec.Template.Spec.Containers[i].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[i].VolumeMounts, redisVolumeMount)
+				}
+			}
+		}
+	}
+}
+
+// mountRedisVolumesInStatefulset mounts redis volumes for an authorization statefulset
+func mountRedisVolumesInStatefulset(authModule csmv1.Module, statefulset *appsv1.StatefulSet) {
+	for _, component := range authModule.Components {
+		for _, config := range component.RedisSecretProviderClass {
+			if config.RedisSecretName != "" {
+				// add volume for redis secret provider class
+				redisVolume := redisVolume(redisSecretName)
+				statefulset.Spec.Template.Spec.Volumes = append(statefulset.Spec.Template.Spec.Volumes, redisVolume)
+
+				// set volume mount for redis secret provider class
+				for i := range statefulset.Spec.Template.Spec.Containers {
+					redisVolumeMount := redisVolumeMount()
+					statefulset.Spec.Template.Spec.Containers[i].VolumeMounts = append(statefulset.Spec.Template.Spec.Containers[i].VolumeMounts, redisVolumeMount)
+				}
+			}
+		}
+	}
+}
+
 // remove vault certificates, args, and volumes/volume mounts if upgrading from verions < v2.3.0
 func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client, dp *appsv1.Deployment) error {
 	// remove vault certificates
@@ -1293,22 +1318,7 @@ func applyDeleteAuthorizationProxyServerV2(ctx context.Context, isDeleting bool,
 	deployment := getProxyServerScaffold(cr.Name, sentinelName, cr.Namespace, proxyImage, opaImage, opaKubeMgmtImage, redisSecretName, redisPasswordKey, int32(replicas), sentinels)
 
 	// SecretProviderClasses is supported from config v2.3.0 (CSM 1.15) onwards
-	for _, component := range authModule.Components {
-		for _, config := range component.RedisSecretProviderClass {
-			if config.RedisSecretName != "" {
-				// add volume for redis secret provider class
-				redisVolume := redisVolume(redisSecretName)
-				deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, redisVolume)
-
-				// set volume mount for redis secret provider class
-				for i := range deployment.Spec.Template.Spec.Containers {
-					redisVolumeMount := redisVolumeMount()
-					deployment.Spec.Template.Spec.Containers[i].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[i].VolumeMounts, redisVolumeMount)
-				}
-			}
-		}
-	}
-
+	mountRedisVolumesInDeployment(authModule, &deployment)
 	deploymentBytes, err := yaml.Marshal(&deployment)
 	if err != nil {
 		return fmt.Errorf("marshalling proxy-server deployment: %w", err)
@@ -1360,22 +1370,7 @@ func applyDeleteAuthorizationTenantServiceV2(ctx context.Context, isDeleting boo
 	deployment := getTenantServiceScaffold(cr.Name, cr.Namespace, sentinelName, image, redisSecretName, redisPasswordKey, int32(replicas), sentinelReplicas)
 
 	// SecretProviderClasses is supported from config v2.3.0 (CSM 1.15) onwards
-	for _, component := range authModule.Components {
-		for _, config := range component.RedisSecretProviderClass {
-			if config.RedisSecretName != "" {
-				// add volume for redis secret provider class
-				redisVolume := redisVolume(redisSecretName)
-				deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, redisVolume)
-
-				// set volume mount for redis secret provider class
-				for i := range deployment.Spec.Template.Spec.Containers {
-					redisVolumeMount := redisVolumeMount()
-					deployment.Spec.Template.Spec.Containers[i].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[i].VolumeMounts, redisVolumeMount)
-				}
-			}
-		}
-	}
-
+	mountRedisVolumesInDeployment(authModule, &deployment)
 	deploymentBytes, err := yaml.Marshal(&deployment)
 	if err != nil {
 		return fmt.Errorf("marshalling tenant-service deployment: %w", err)
@@ -1429,22 +1424,7 @@ func applyDeleteAuthorizationRedisStatefulsetV2(ctx context.Context, isDeleting 
 	statefulset := getAuthorizationRedisStatefulsetScaffold(cr.Name, redisName, cr.Namespace, image, redisSecretName, redisPasswordKey, checksum, int32(replicas))
 
 	// SecretProviderClasses is supported from config v2.3.0 (CSM 1.15) onwards
-	for _, component := range authModule.Components {
-		for _, config := range component.RedisSecretProviderClass {
-			if config.RedisSecretName != "" {
-				// add volume for redis secret provider class
-				redisVolume := redisVolume(redisSecretName)
-				statefulset.Spec.Template.Spec.Volumes = append(statefulset.Spec.Template.Spec.Volumes, redisVolume)
-
-				// set volume mount for redis secret provider class
-				for i := range statefulset.Spec.Template.Spec.Containers {
-					redisVolumeMount := redisVolumeMount()
-					statefulset.Spec.Template.Spec.Containers[i].VolumeMounts = append(statefulset.Spec.Template.Spec.Containers[i].VolumeMounts, redisVolumeMount)
-				}
-			}
-		}
-	}
-
+	mountRedisVolumesInStatefulset(authModule, &statefulset)
 	statefulsetBytes, err := yaml.Marshal(&statefulset)
 	if err != nil {
 		return fmt.Errorf("marshalling redis statefulset: %w", err)
@@ -1500,22 +1480,7 @@ func applyDeleteAuthorizationRediscommanderDeploymentV2(ctx context.Context, isD
 	deployment := getAuthorizationRediscommanderDeploymentScaffold(cr.Name, rediscommanderName, cr.Namespace, image, redisSecretName, redisUsernameKey, redisPasswordKey, sentinelName, checksum, sentinelReplicas)
 
 	// SecretProviderClasses is supported from config v2.3.0 (CSM 1.15) onwards
-	for _, component := range authModule.Components {
-		for _, config := range component.RedisSecretProviderClass {
-			if config.RedisSecretName != "" {
-				// add volume for redis secret provider class
-				redisVolume := redisVolume(redisSecretName)
-				deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, redisVolume)
-
-				// set volume mount for redis secret provider class
-				for i := range deployment.Spec.Template.Spec.Containers {
-					redisVolumeMount := redisVolumeMount()
-					deployment.Spec.Template.Spec.Containers[i].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[i].VolumeMounts, redisVolumeMount)
-				}
-			}
-		}
-	}
-
+	mountRedisVolumesInDeployment(authModule, &deployment)
 	deploymentBytes, err := yaml.Marshal(&deployment)
 	if err != nil {
 		return fmt.Errorf("marshalling rediscommander deployment: %w", err)
@@ -1570,22 +1535,7 @@ func applyDeleteAuthorizationSentinelStatefulsetV2(ctx context.Context, isDeleti
 	statefulset := getAuthorizationSentinelStatefulsetScaffold(cr.Name, sentinelName, redisName, cr.Namespace, image, redisSecretName, redisPasswordKey, checksum, int32(replicas))
 
 	// SecretProviderClasses is supported from config v2.3.0 (CSM 1.15) onwards
-	for _, component := range authModule.Components {
-		for _, config := range component.RedisSecretProviderClass {
-			if config.RedisSecretName != "" {
-				// add volume for redis secret provider class
-				redisVolume := redisVolume(redisSecretName)
-				statefulset.Spec.Template.Spec.Volumes = append(statefulset.Spec.Template.Spec.Volumes, redisVolume)
-
-				// set volume mount for redis secret provider class
-				for i := range statefulset.Spec.Template.Spec.Containers {
-					redisVolumeMount := redisVolumeMount()
-					statefulset.Spec.Template.Spec.Containers[i].VolumeMounts = append(statefulset.Spec.Template.Spec.Containers[i].VolumeMounts, redisVolumeMount)
-				}
-			}
-		}
-	}
-
+	mountRedisVolumesInStatefulset(authModule, &statefulset)
 	statefulsetBytes, err := yaml.Marshal(&statefulset)
 	if err != nil {
 		return fmt.Errorf("marshalling sentinel statefulset: %w", err)

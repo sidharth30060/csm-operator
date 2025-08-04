@@ -480,7 +480,7 @@ func getAuthorizationRedisStatefulsetScaffold(crName, name, namespace, image, re
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: "redis-cm",
+										Name: "redis-csm-cm",
 									},
 								},
 							},
@@ -742,7 +742,6 @@ func getAuthorizationSentinelStatefulsetScaffold(crName, sentinelName, redisName
 								sentinel parallel-syncs mymaster 2
 								sentinel auth-pass mymaster $REDIS_PASSWORD
 								" > /etc/redis/sentinel.conf
-								cat /etc/redis/sentinel.conf
 								`,
 							},
 							VolumeMounts: []corev1.VolumeMount{
