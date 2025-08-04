@@ -914,20 +914,17 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	deployment := getStorageServiceScaffold(cr.Name, cr.Namespace, image, int32(replicas))
 
 	if storageCreds {
-		authCsmObject, _ := getCsmObject(ctx, ctrlClient, "authorization", cr.Namespace)
-		if authCsmObject != nil {
-			// remove vault from version v2.3.0 since vault is not supported in v2.3.0 and onwards
-			err := removeVaultFromStorageService(ctx, cr, ctrlClient, &deployment)
-			if err != nil {
-				return fmt.Errorf("removing vault from storage service: %v", err)
-			}
-			err = ctrlClient.Get(ctx, client.ObjectKey{
-				Namespace: cr.Namespace,
-				Name:      cr.Name,
-			}, &cr)
-			if err != nil {
-				return fmt.Errorf("failed to get CSM authorization proxy CR")
-			}
+		// remove vault from version v2.3.0 since vault is not supported in v2.3.0 and onwards
+		err := removeVaultFromStorageService(ctx, cr, ctrlClient, &deployment)
+		if err != nil {
+			return fmt.Errorf("removing vault from storage service: %v", err)
+		}
+		err = ctrlClient.Get(ctx, client.ObjectKey{
+			Namespace: cr.Namespace,
+			Name:      cr.Name,
+		}, &cr)
+		if err != nil {
+			return fmt.Errorf("failed to get CSM authorization proxy CR")
 		}
 
 		// Determine whether to read from secret provider classes or kubernetes secrets
@@ -1198,8 +1195,20 @@ func mountRedisVolumesInStatefulset(authModule csmv1.Module, statefulset *appsv1
 
 // remove vault certificates, args, and volumes/volume mounts if upgrading from verions < v2.3.0
 func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client, dp *appsv1.Deployment) error {
+	log := logger.GetLogger(ctx)
+
+	// check if there is an existing storage service deployment to be updated
+	err := ctrlClient.Get(ctx, client.ObjectKey{
+		Namespace: dp.Namespace,
+		Name:      dp.Name,
+	}, &cr)
+	if err != nil {
+		log.Infof("%s not found. No need to remvoe vault from storage service.", cr.Name)
+		return nil
+	}
+
 	// remove vault certificates
-	err := applyDeleteVaultCertificates(ctx, true, cr, ctrlClient)
+	err = applyDeleteVaultCertificates(ctx, true, cr, ctrlClient)
 	if err != nil {
 		return fmt.Errorf("deleting vault certificates: %w", err)
 	}
@@ -1244,30 +1253,6 @@ func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorag
 	}
 
 	return nil
-}
-
-func getDeployment(ctx context.Context, ctrlClient client.Client, deploymentName, namespace string) (*appsv1.Deployment, error) {
-	dp := &appsv1.Deployment{}
-	if err := ctrlClient.Get(ctx, client.ObjectKey{
-		Namespace: namespace,
-		Name:      deploymentName,
-	}, dp); err != nil {
-		return nil, err
-	}
-
-	return dp, nil
-}
-
-func getCsmObject(ctx context.Context, ctrlClient client.Client, csmObjectName, namespace string) (*csmv1.ContainerStorageModule, error) {
-	csmObject := &csmv1.ContainerStorageModule{}
-	if err := ctrlClient.Get(ctx, client.ObjectKey{
-		Namespace: namespace,
-		Name:      csmObjectName,
-	}, csmObject); err != nil {
-		return nil, err
-	}
-
-	return csmObject, nil
 }
 
 func applyDeleteAuthorizationProxyServerV2(ctx context.Context, isDeleting bool, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client) error {
