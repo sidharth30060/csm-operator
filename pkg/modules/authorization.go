@@ -916,23 +916,17 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	if storageCreds {
 		authCsmObject, _ := getCsmObject(ctx, ctrlClient, "authorization", cr.Namespace)
 		if authCsmObject != nil {
-			// get the config version of the existing authorization CR
-			authModule, err := getAuthorizationModule(*authCsmObject)
+			// remove vault from version v2.3.0 since vault is not supported in v2.3.0 and onwards
+			err := removeVaultFromStorageService(ctx, cr, ctrlClient, &deployment)
 			if err != nil {
-				return fmt.Errorf("getting authorization module: %v", err)
+				return fmt.Errorf("removing vault from storage service: %v", err)
 			}
-
-			// remove vault if only upgrading from version v2.2.0 to v2.3.0 since vault is not supported in v2.3.0 and onwards
-			if authModule.ConfigVersion == "v2.2.0" {
-				dp, _ := getDeployment(ctx, ctrlClient, "storage-service", cr.Namespace)
-				if dp != nil {
-					log.Infof("existing storage service deployment found")
-					// remove vault certificates, args, and volumes/volume mounts
-					err := removeVaultFromStorageService(ctx, *authCsmObject, ctrlClient, dp)
-					if err != nil {
-						return fmt.Errorf("removing vault from storage service: %v", err)
-					}
-				}
+			err = ctrlClient.Get(ctx, client.ObjectKey{
+				Namespace: cr.Namespace,
+				Name:      cr.Name,
+			}, &cr)
+			if err != nil {
+				return fmt.Errorf("failed to get CSM authorization proxy CR")
 			}
 		}
 
@@ -1237,13 +1231,14 @@ func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorag
 	var newVolumes []corev1.Volume
 	for _, volume := range dp.Spec.Template.Spec.Volumes {
 		if !strings.Contains(volume.Name, "vault-client-certificate-") {
+			volume.VolumeSource.Projected = nil // Clear projected sources if they exists
 			newVolumes = append(newVolumes, volume)
 		}
 	}
 	dp.Spec.Template.Spec.Volumes = newVolumes
 
 	// Update the deployment
-	err = ctrlClient.Update(context.Background(), dp)
+	err = ctrlClient.Update(ctx, dp)
 	if err != nil {
 		return fmt.Errorf("updating storage service deployment for upgrading: %w", err)
 	}
