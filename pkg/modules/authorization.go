@@ -834,6 +834,39 @@ func authorizationStorageServiceV1(ctx context.Context, isDeleting bool, cr csmv
 	return applyDeleteObjects(ctx, ctrlClient, string(deploymentYaml), isDeleting)
 }
 
+// Helper: return the “key” part of an arg, e.g. "--redis-sentinel"
+func argKey(arg string) string {
+	if i := strings.Index(arg, "="); i >= 0 {
+		return arg[:i] // strip the value part
+	}
+	return arg // flag without a value
+}
+
+// Replace an existing arg (matched by key) or append it if it does not
+// exist yet. Returns the (possibly) modified slice.
+func replaceOrAppendArg(existing []string, newArg string) []string {
+	key := argKey(newArg)
+	for i, cur := range existing {
+		if argKey(cur) == key {
+			existing[i] = newArg
+			return existing
+		}
+	}
+	return append(existing, newArg)
+}
+
+// Replace an existing EnvVar (matched by Name) or append it if it does
+// not exist yet. Returns the (possibly) modified slice.
+func replaceOrAppendEnv(existing []corev1.EnvVar, newVar corev1.EnvVar) []corev1.EnvVar {
+	for i, ev := range existing {
+		if ev.Name == newVar.Name {
+			existing[i] = newVar
+			return existing
+		}
+	}
+	return append(existing, newVar)
+}
+
 func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client) error {
 	log := logger.GetLogger(ctx)
 	authModule, err := getAuthorizationModule(cr)
@@ -975,7 +1008,14 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	}
 	for i, c := range deployment.Spec.Template.Spec.Containers {
 		if c.Name == "storage-service" {
-			deployment.Spec.Template.Spec.Containers[i].Env = append(deployment.Spec.Template.Spec.Containers[i].Env, redis...)
+			// add redis envs if they are not present or replace if they exist
+			updatedEnv := c.Env
+			log.Infof("updated env: %v", updatedEnv)
+			for _, ev := range redis {
+				updatedEnv = replaceOrAppendEnv(updatedEnv, ev)
+			}
+			deployment.Spec.Template.Spec.Containers[i].Env = updatedEnv
+			log.Infof("deployment env: %v", deployment.Spec.Template.Spec.Containers[i].Env)
 			break
 		}
 	}
@@ -1007,7 +1047,14 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 
 	for i, c := range deployment.Spec.Template.Spec.Containers {
 		if c.Name == "storage-service" {
-			deployment.Spec.Template.Spec.Containers[i].Args = append(deployment.Spec.Template.Spec.Containers[i].Args, args...)
+			// add arguments if they are not present or replace if they exist
+			updatedArgs := c.Args
+			log.Infof("updated args: %v", updatedArgs)
+			for _, a := range args {
+				updatedArgs = replaceOrAppendArg(updatedArgs, a)
+			}
+			deployment.Spec.Template.Spec.Containers[i].Args = updatedArgs
+			log.Infof("deployment args: %v", deployment.Spec.Template.Spec.Containers[i].Args)
 			break
 		}
 	}
@@ -1171,57 +1218,62 @@ func mountVaultVolumes(vaults []csmv1.Vault, deployment *appsv1.Deployment) {
 	}
 }
 
-// volumeExists returns true if a volume with the given name is already present.
-func volumeExists(deployment *appsv1.Deployment, name string) bool {
-    for _, v := range deployment.Spec.Template.Spec.Volumes {
-        if v.Name == name {
-            return true
-        }
-    }
-    return false
+// upsertVolume replaces a volume with the same name (if any) or appends it.
+func upsertVolume(deployment *appsv1.Deployment, vol corev1.Volume) {
+	vols := deployment.Spec.Template.Spec.Volumes
+	for i, v := range vols {
+		if v.Name == vol.Name {
+			vols[i] = vol // replace existing entry
+			deployment.Spec.Template.Spec.Volumes = vols
+			return
+		}
+	}
+	deployment.Spec.Template.Spec.Volumes = append(vols, vol)
 }
 
-// mountExists returns true if the container already has a mount with the given name & path.
-func mountExists(container *corev1.Container, name, path string) bool {
-    for _, m := range container.VolumeMounts {
-        if m.Name == name && m.MountPath == path {
-            return true
-        }
-    }
-    return false
+// upsertVolumeMount replaces a mount that matches both name and mountPath,
+// or appends it if no such mount exists.
+func upsertVolumeMount(container *corev1.Container, mount corev1.VolumeMount) {
+	mounts := container.VolumeMounts
+	for i, m := range mounts {
+		if m.Name == mount.Name && m.MountPath == mount.MountPath {
+			mounts[i] = mount // replace existing entry
+			container.VolumeMounts = mounts
+			return
+		}
+	}
+	container.VolumeMounts = append(mounts, mount)
 }
 
 func mountSecretVolumes(secrets []string, deployment *appsv1.Deployment) {
 	for _, secret := range secrets {
 		volName := fmt.Sprintf("storage-system-secrets-%s", secret)
-		if !volumeExists(deployment, volName) {
-			volume := corev1.Volume{
-				Name: volName,
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: secret,
-					},
+		volume := corev1.Volume{
+			Name: volName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: secret,
 				},
-			}
-			deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, volume)
+			},
 		}
+		upsertVolume(deployment, volume)
 	}
 
 	// set volume mounts for kubernetes secrets
 	for i, c := range deployment.Spec.Template.Spec.Containers {
 		if c.Name == "storage-service" {
+			container := c
 			for _, secret := range secrets {
 				volName := fmt.Sprintf("storage-system-secrets-%s", secret)
 				mountPath := fmt.Sprintf("/etc/csm-authorization/%s", secret)
-
-				if !mountExists(&c, volName, mountPath) {
-					deployment.Spec.Template.Spec.Containers[i].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[i].VolumeMounts, corev1.VolumeMount{
-						Name:      volName,
-						MountPath: mountPath,
-						ReadOnly:  true,
-					})
+				mount := corev1.VolumeMount{
+					Name:      volName,
+					MountPath: mountPath,
+					ReadOnly:  true,
 				}
+				upsertVolumeMount(&container, mount)
 			}
+			deployment.Spec.Template.Spec.Containers[i] = container
 			break
 		}
 	}
