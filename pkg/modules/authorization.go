@@ -914,13 +914,9 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 		}
 	}
 
-	log.Infof("authorization storage service image: %s", image)
-
 	// conversion to int32 is safe for a value up to 2147483647
 	// #nosec G115
 	deployment := getStorageServiceScaffold(cr.Name, cr.Namespace, image, int32(replicas), configSecretName)
-
-	log.Infof("deployment: %+v", deployment)
 
 	// SecretProviderClasses is supported from config v2.3.0 (CSM 1.15) onwards
 	if storageCreds {
@@ -1013,22 +1009,13 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	if v2Version {
 		for i, c := range deployment.Spec.Template.Spec.Containers {
 			if c.Name == "storage-service" {
-				hasPromhttpPort := false
-				for _, port := range c.Ports {
-					if port.Name == "promhttp" {
-						hasPromhttpPort = true
-						break
-					}
-				}
-				if !hasPromhttpPort {
-					deployment.Spec.Template.Spec.Containers[i].Ports = append(deployment.Spec.Template.Spec.Containers[i].Ports,
-						corev1.ContainerPort{
-							Name:          "promhttp",
-							Protocol:      "TCP",
-							ContainerPort: 2112,
-						},
-					)
-				}
+				deployment.Spec.Template.Spec.Containers[i].Ports = append(deployment.Spec.Template.Spec.Containers[i].Ports,
+					corev1.ContainerPort{
+						Name:          "promhttp",
+						Protocol:      "TCP",
+						ContainerPort: 2112,
+					},
+				)
 				break
 			}
 		}
@@ -1172,62 +1159,30 @@ func mountVaultVolumes(vaults []csmv1.Vault, deployment *appsv1.Deployment) {
 	}
 }
 
-// upsertVolume replaces a volume with the same name (if any) or appends it.
-func upsertVolume(deployment *appsv1.Deployment, vol corev1.Volume) {
-	vols := deployment.Spec.Template.Spec.Volumes
-	for i, v := range vols {
-		if v.Name == vol.Name {
-			vols[i] = vol // replace existing entry
-			deployment.Spec.Template.Spec.Volumes = vols
-			return
-		}
-	}
-	deployment.Spec.Template.Spec.Volumes = append(vols, vol)
-}
-
-// upsertVolumeMount replaces a mount that matches both name and mountPath,
-// or appends it if no such mount exists.
-func upsertVolumeMount(container *corev1.Container, mount corev1.VolumeMount) {
-	mounts := container.VolumeMounts
-	for i, m := range mounts {
-		if m.Name == mount.Name && m.MountPath == mount.MountPath {
-			mounts[i] = mount // replace existing entry
-			container.VolumeMounts = mounts
-			return
-		}
-	}
-	container.VolumeMounts = append(mounts, mount)
-}
-
 func mountSecretVolumes(secrets []string, deployment *appsv1.Deployment) {
 	for _, secret := range secrets {
-		volName := fmt.Sprintf("storage-system-secrets-%s", secret)
 		volume := corev1.Volume{
-			Name: volName,
+			Name: fmt.Sprintf("storage-system-secrets-%s", secret),
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
 					SecretName: secret,
 				},
 			},
 		}
-		upsertVolume(deployment, volume)
+
+		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, volume)
 	}
 
 	// set volume mounts for kubernetes secrets
 	for i, c := range deployment.Spec.Template.Spec.Containers {
 		if c.Name == "storage-service" {
-			container := c
 			for _, secret := range secrets {
-				volName := fmt.Sprintf("storage-system-secrets-%s", secret)
-				mountPath := fmt.Sprintf("/etc/csm-authorization/%s", secret)
-				mount := corev1.VolumeMount{
-					Name:      volName,
-					MountPath: mountPath,
+				deployment.Spec.Template.Spec.Containers[i].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[i].VolumeMounts, corev1.VolumeMount{
+					Name:      fmt.Sprintf("storage-system-secrets-%s", secret),
+					MountPath: fmt.Sprintf("/etc/csm-authorization/%s", secret),
 					ReadOnly:  true,
-				}
-				upsertVolumeMount(&container, mount)
+				})
 			}
-			deployment.Spec.Template.Spec.Containers[i] = container
 			break
 		}
 	}
