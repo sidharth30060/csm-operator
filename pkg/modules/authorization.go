@@ -834,39 +834,6 @@ func authorizationStorageServiceV1(ctx context.Context, isDeleting bool, cr csmv
 	return applyDeleteObjects(ctx, ctrlClient, string(deploymentYaml), isDeleting)
 }
 
-// Helper: return the “key” part of an arg, e.g. "--redis-sentinel"
-func argKey(arg string) string {
-	if i := strings.Index(arg, "="); i >= 0 {
-		return arg[:i] // strip the value part
-	}
-	return arg // flag without a value
-}
-
-// Replace an existing arg (matched by key) or append it if it does not
-// exist yet. Returns the (possibly) modified slice.
-func replaceOrAppendArg(existing []string, newArg string) []string {
-	key := argKey(newArg)
-	for i, cur := range existing {
-		if argKey(cur) == key {
-			existing[i] = newArg
-			return existing
-		}
-	}
-	return append(existing, newArg)
-}
-
-// Replace an existing EnvVar (matched by Name) or append it if it does
-// not exist yet. Returns the (possibly) modified slice.
-func replaceOrAppendEnv(existing []corev1.EnvVar, newVar corev1.EnvVar) []corev1.EnvVar {
-	for i, ev := range existing {
-		if ev.Name == newVar.Name {
-			existing[i] = newVar
-			return existing
-		}
-	}
-	return append(existing, newVar)
-}
-
 func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client) error {
 	log := logger.GetLogger(ctx)
 	authModule, err := getAuthorizationModule(cr)
@@ -962,13 +929,6 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 		if err != nil {
 			return fmt.Errorf("removing vault from storage service: %v", err)
 		}
-		err = ctrlClient.Get(ctx, client.ObjectKey{
-			Namespace: cr.Namespace,
-			Name:      cr.Name,
-		}, &cr)
-		if err != nil {
-			return fmt.Errorf("failed to get CSM authorization proxy CR")
-		}
 
 		// Determine whether to read from secret provider classes or kubernetes secrets
 		if secretProviderClasses != nil && (len(secretProviderClasses.Vaults) > 0 || len(secretProviderClasses.Conjurs) > 0) {
@@ -1012,14 +972,7 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 	}
 	for i, c := range deployment.Spec.Template.Spec.Containers {
 		if c.Name == "storage-service" {
-			// add redis envs if they are not present or replace if they exist
-			updatedEnv := c.Env
-			log.Infof("updated env: %v", updatedEnv)
-			for _, ev := range redis {
-				updatedEnv = replaceOrAppendEnv(updatedEnv, ev)
-			}
-			deployment.Spec.Template.Spec.Containers[i].Env = updatedEnv
-			log.Infof("deployment env: %v", deployment.Spec.Template.Spec.Containers[i].Env)
+			deployment.Spec.Template.Spec.Containers[i].Env = append(deployment.Spec.Template.Spec.Containers[i].Env, redis...)
 			break
 		}
 	}
@@ -1051,14 +1004,7 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 
 	for i, c := range deployment.Spec.Template.Spec.Containers {
 		if c.Name == "storage-service" {
-			// add arguments if they are not present or replace if they exist
-			updatedArgs := c.Args
-			log.Infof("updated args: %v", updatedArgs)
-			for _, a := range args {
-				updatedArgs = replaceOrAppendArg(updatedArgs, a)
-			}
-			deployment.Spec.Template.Spec.Containers[i].Args = updatedArgs
-			log.Infof("deployment args: %v", deployment.Spec.Template.Spec.Containers[i].Args)
+			deployment.Spec.Template.Spec.Containers[i].Args = append(deployment.Spec.Template.Spec.Containers[i].Args, args...)
 			break
 		}
 	}
