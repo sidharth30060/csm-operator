@@ -794,3 +794,42 @@ func createRedisK8sSecret(name, namespace string) corev1.Secret {
 		},
 	}
 }
+
+func createConfigSecretVolumeAndVolumeMnts(configSecretName string) ([]corev1.Volume, []corev1.VolumeMount) {
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "csm-config-params",
+			MountPath: "/etc/karavi-authorization/csm-config-params",
+		},
+		{
+			Name:      "config-volume",
+			MountPath: "/etc/karavi-authorization/config",
+		},
+	}
+	volSecName := "karavi-config-secret"
+	if configSecretName != "" {
+		volSecName = configSecretName
+	}
+	volumes := []corev1.Volume{
+		{
+			Name: "csm-config-params",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "csm-config-params",
+					},
+				},
+			},
+		},
+		{
+			Name: "config-volume",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: volSecName,
+				},
+			},
+		},
+	}
+
+	return volumes, volumeMounts
+}
