@@ -947,14 +947,18 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 		}
 	}
 
+	log.Infof("authorization storage service image: %s", image)
+
 	// conversion to int32 is safe for a value up to 2147483647
 	// #nosec G115
 	deployment := getStorageServiceScaffold(cr.Name, cr.Namespace, image, int32(replicas), configSecretName)
 
+	log.Infof("deployment: %+v", deployment)
+
 	// SecretProviderClasses is supported from config v2.3.0 (CSM 1.15) onwards
 	if storageCreds {
 		// remove vault from version v2.3.0 since vault is not supported in v2.3.0 and onwards
-		err := removeVaultFromStorageService(ctx, cr, ctrlClient, &deployment)
+		err := removeVaultFromStorageService(ctx, cr, ctrlClient, deployment)
 		if err != nil {
 			return fmt.Errorf("removing vault from storage service: %v", err)
 		}
@@ -1102,14 +1106,16 @@ func authorizationStorageServiceV2(ctx context.Context, isDeleting bool, cr csmv
 }
 
 // remove vault certificates, args, and volumes/volume mounts if upgrading from verions < v2.3.0
-func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client, dp *appsv1.Deployment) error {
+func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorageModule, ctrlClient crclient.Client, dp appsv1.Deployment) error {
 	log := logger.GetLogger(ctx)
+
+	currentDeployment := &appsv1.Deployment{}
 
 	// check if there is an existing storage service deployment to be updated
 	err := ctrlClient.Get(ctx, client.ObjectKey{
 		Namespace: dp.Namespace,
 		Name:      dp.Name,
-	}, dp)
+	}, currentDeployment)
 	if err != nil {
 		log.Infof("%s not found. No need to remove vault from storage service.", dp.Name)
 		return nil
@@ -1122,7 +1128,7 @@ func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorag
 	}
 
 	// remove vault args and volume mounts from the deployment's container
-	for i, container := range dp.Spec.Template.Spec.Containers {
+	for i, container := range currentDeployment.Spec.Template.Spec.Containers {
 		if container.Name == "storage-service" {
 			// Filter out vault args
 			var newArgs []string
@@ -1131,7 +1137,7 @@ func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorag
 					newArgs = append(newArgs, arg)
 				}
 			}
-			dp.Spec.Template.Spec.Containers[i].Args = newArgs
+			currentDeployment.Spec.Template.Spec.Containers[i].Args = newArgs
 
 			// Filter out vault volume mounts
 			var newVolumeMounts []corev1.VolumeMount
@@ -1140,25 +1146,27 @@ func removeVaultFromStorageService(ctx context.Context, cr csmv1.ContainerStorag
 					newVolumeMounts = append(newVolumeMounts, volumeMount)
 				}
 			}
-			dp.Spec.Template.Spec.Containers[i].VolumeMounts = newVolumeMounts
+			currentDeployment.Spec.Template.Spec.Containers[i].VolumeMounts = newVolumeMounts
 		}
 	}
 
 	// Filter out vault volumes
 	var newVolumes []corev1.Volume
-	for _, volume := range dp.Spec.Template.Spec.Volumes {
+	for _, volume := range currentDeployment.Spec.Template.Spec.Volumes {
 		if !strings.Contains(volume.Name, "vault-client-certificate-") {
 			volume.VolumeSource.Projected = nil // Clear projected sources if they exists
 			newVolumes = append(newVolumes, volume)
 		}
 	}
-	dp.Spec.Template.Spec.Volumes = newVolumes
+	currentDeployment.Spec.Template.Spec.Volumes = newVolumes
 
 	// Update the deployment
-	err = ctrlClient.Update(ctx, dp)
+	err = ctrlClient.Update(ctx, currentDeployment)
 	if err != nil {
 		return fmt.Errorf("updating storage service deployment for upgrading: %w", err)
 	}
+
+	log.Infof("current deployment: %+v", currentDeployment)
 
 	return nil
 }
