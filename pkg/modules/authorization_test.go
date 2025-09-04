@@ -2246,8 +2246,6 @@ func TestMountSPCVolume(t *testing.T) {
 func TestRemoveVaultFromStorageService(t *testing.T) {
 	// Create a fake client
 	ctrlClient := ctrlClientFake.NewClientBuilder().Build()
-
-	// Create a test context
 	ctx := context.TODO()
 
 	// Create a test ContainerStorageModule
@@ -2257,8 +2255,12 @@ func TestRemoveVaultFromStorageService(t *testing.T) {
 			Namespace: "test-namespace",
 		},
 		Spec: csmv1.ContainerStorageModuleSpec{
-			Driver: csmv1.DriverSpec{
-				ConfigVersion: "v2.2.0",
+			Modules: []csmv1.Module{
+				{
+					Name:    csmv1.AuthorizationServer,
+					Enabled: true,
+					ConfigVersion: "v2.3.0",
+				},
 			},
 		},
 	}
@@ -2310,10 +2312,7 @@ func TestRemoveVaultFromStorageService(t *testing.T) {
 	// Add the test deployment to the fake client
 	ctrlClient.Create(ctx, &dp)
 
-	// Call the removeVaultFromStorageService function
 	err := removeVaultFromStorageService(ctx, cr, ctrlClient, dp)
-
-	// Check if the error is nil
 	if err != nil {
 		t.Errorf("Expected nil error, but got %v", err)
 	}
@@ -2356,4 +2355,6 @@ func TestRemoveVaultFromStorageService(t *testing.T) {
 			t.Errorf("Expected vault volumes to be removed, but found %s", volume.Name)
 		}
 	}
+
+	ctrlClient.Delete(ctx, &dp)
 }
